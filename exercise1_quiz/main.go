@@ -2,65 +2,77 @@ package main
 
 import (
 	"encoding/csv"
-	"io"
+	"flag"
+	"fmt"
 	"os"
+	"strings"
+	"time"
 )
 
-// Read in a file (csv) ✅
-// Present the quiz to the user
-// Keep track of how many questions they get right and how many incorrect
-// Immediately ask the next question whether the previous is wrong/right
-// Default to problems.csv but user should be able to customize the file via
-// a flag
-
-// CSV format:
-// 5+5, 10
-// 7+3, 10
-// 1+1, 2
-// etc
-
-// Assume quizzes are < 100 questions and have single word/number answers
-
-// At the end, should output total number of questions correct
-// and how many questions there were in total (x/y correct)
-// Invalid answers are considered incorrect.
-
-type question struct {
-	Problem string
-	Answer  string
-}
+var (
+	csvFileName = flag.String("csv", "problems.csv",
+		"a csv file in the format of 'question,answer'")
+	timeLimit = flag.Int("limit", 30, "the time limit for the quiz in seconds")
+)
 
 func main() {
-	readCSV("problems.csv")
+
+	flag.Parse()
+	file, err := os.Open(*csvFileName)
+	if err != nil {
+		exit(fmt.Sprintf("Failed to open CSV file: %s", *csvFileName))
+		os.Exit(1)
+	}
+	r := csv.NewReader(file)
+	lines, err := r.ReadAll()
+	if err != nil {
+		exit(fmt.Sprintf("Couldn't parse the CSV file."))
+	}
+	problems := parseLines(lines)
+
+	timer := time.NewTimer(time.Duration(*timeLimit) * time.Second)
+	correct := 0
+
+	for i, p := range problems {
+		fmt.Printf("Problem #%d: %s = \n", i+1, p.q)
+		answerCh := make(chan string)
+		go func() {
+			var answer string
+			fmt.Scanf("%s\n", &answer)
+			answerCh <- answer
+		}()
+
+		select {
+		case <-timer.C:
+			fmt.Printf("\nYou scored %d out of %d.\n", correct, len(problems))
+			return
+		case answer := <-answerCh:
+			if answer == p.a {
+				correct++
+			}
+		}
+	}
+
+	fmt.Printf("You scored %d out of %d.\n", correct, len(problems))
 }
 
-// ReadCSV reads in a csv
-// Returns a []Question and error if applicable
-func readCSV(filename string) ([]question, error) {
-	// open the file
-	f, err := os.Open(filename)
-	if err != nil {
-		panic(err)
+func parseLines(lines [][]string) []problem {
+	ret := make([]problem, len(lines))
+	for i, line := range lines {
+		ret[i] = problem{
+			q: line[0],
+			a: strings.TrimSpace(line[1]),
+		}
 	}
-	defer f.Close()
+	return ret
+}
 
-	r := csv.NewReader(f)
-	questions := []question{}
+type problem struct {
+	q string
+	a string
+}
 
-	for {
-		line, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			// update to sane error
-			panic(err)
-		}
-		if len(line) != 2 {
-			panic(err)
-		}
-
-		questions = append(questions, question{line[0], line[1]})
-	}
-	return questions, nil
+func exit(msg string) {
+	fmt.Println(msg)
+	os.Exit(1)
 }
